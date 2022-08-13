@@ -1,6 +1,8 @@
 use coffee::graphics::{Color, Frame, Window, WindowSettings, Mesh, Shape, Rectangle};
 use coffee::load::Task;
 use coffee::{Game, Result, Timer};
+use coffee::input::KeyboardAndMouse;
+use coffee::input::keyboard::KeyCode;
 use rand::{ Rng, thread_rng };
 
 fn main() -> Result<()> {
@@ -62,12 +64,13 @@ struct MyGame {
     screen_width: f32,
     screen_height: f32,
     game_matrix: GameMatrix<100, 100>,
+    sim_playing: bool,
 }
 
 impl Game for MyGame {
     const TICKS_PER_SECOND: u16 = 5;
 
-    type Input = (); // No input data
+    type Input = KeyboardAndMouse; // No input data
     type LoadingScreen = (); // No loading screen
 
     fn load(_window: &Window) -> Task<MyGame> {
@@ -89,7 +92,14 @@ impl Game for MyGame {
             game_matrix: GameMatrix(raw_matrix),
             screen_width,
             screen_height,
+            sim_playing: false,
         })
+    }
+
+    fn interact(&mut self, input: &mut Self::Input, _window: &mut Window) {
+       if input.keyboard().was_key_released(KeyCode::Space) {
+           self.sim_playing = !self.sim_playing;
+       }
     }
 
     fn update(&mut self, _window: &Window) {
@@ -97,6 +107,9 @@ impl Game for MyGame {
         // Data reqiured by draw fn
         self.screen_width = _window.width();
         self.screen_height = _window.height();
+
+        // Skip sim step if paused
+        if !self.sim_playing { return; }
 
         // Simulation step
         let new_game_matrix: GameMatrix<100, 100> = GameMatrix::new();
