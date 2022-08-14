@@ -1,16 +1,19 @@
 use coffee::graphics::{Color, Frame, Window, WindowSettings, Mesh, Shape, Rectangle};
+use coffee::ui::{Align, Column, Element, Justify, Renderer, Text, UserInterface};
 use coffee::load::Task;
 use coffee::{Game, Result, Timer};
+
 use coffee::input::KeyboardAndMouse;
 use coffee::input::keyboard::KeyCode;
+
 use rand::{ Rng, thread_rng };
 
 mod state;
 use state::GameMatrix;
 
 fn main() -> Result<()> {
-    MyGame::run(WindowSettings {
-        title: String::from("A caffeinated game"),
+    <MyGame as UserInterface>::run(WindowSettings {
+        title: String::from("Game of Rust"),
         size: (1280, 1024),
         resizable: true,
         fullscreen: false,
@@ -59,46 +62,108 @@ fn should_cell_be_alive(state: &GameMatrix<100, 100>, cell: (usize, usize)) -> b
     }
 }
 
+fn init_random_game_state() -> GameMatrix<100, 100> {
+    // Init (random) state
+    let game_matrix: GameMatrix<100, 100> = GameMatrix::new();
+    let GameMatrix(mut raw_matrix) = game_matrix;
+
+    for ((x, y), _) in game_matrix.iter_cells() {
+        raw_matrix[x][y] = get_random_boolean(0.1)
+    }
+
+    GameMatrix(raw_matrix)
+}
+
 
 struct MyGame {
    // Your game state and assets go here...
     game_matrix: GameMatrix<100, 100>,
     sim_playing: bool,
+    sim_speed: u16,
+    tick: u16,
+}
+
+impl UserInterface for MyGame {
+    type Message = ();
+    type Renderer = Renderer;
+
+    fn react(&mut self, _message: Self::Message, _window: &mut Window) {}
+
+    fn layout(&mut self, window: &Window) -> Element<()> {
+        let game_stats = Column::new()
+            .width(200)
+            .align_items(Align::Start)
+            .justify_content(Justify::Start)
+            .spacing(8)
+            .push(
+                if self.sim_playing { Text::new("► PLAYING") }
+                else { Text::new("▌▌PAUSED") })
+            .push(Text::new(&format!("SPEED: x{}", self.sim_speed)));
+
+        let game_ctrls = Column::new()
+            .align_items(Align::End)
+            .justify_content(Justify::End)
+            .spacing(8)
+            .push(Text::new("scroll - inc/dec sim speed"))
+            .push(Text::new("space - play/pause sim"));
+
+        Column::new()
+            .height(window.height() as u32)
+            .push(game_stats)
+            .push(game_ctrls)
+            .justify_content(Justify::SpaceBetween)
+            .into()
+    }
 }
 
 impl Game for MyGame {
-    const TICKS_PER_SECOND: u16 = 5;
+    // updates per second; not sure about draws;
+    // for the time being used as sim_speed top cap
+    const TICKS_PER_SECOND: u16 = 60; 
 
     type Input = KeyboardAndMouse;
     type LoadingScreen = (); // No loading screen
 
     fn load(_window: &Window) -> Task<MyGame> {
         // Load your game assets here. Check out the `load` module!
-
-        // Init (random) state
-        let game_matrix: GameMatrix<100, 100> = GameMatrix::new();
-        let GameMatrix(mut raw_matrix) = game_matrix;
-
-        for ((x, y), _) in game_matrix.iter_cells() {
-            raw_matrix[x][y] = get_random_boolean(0.1)
-        }
+        let game_matrix = init_random_game_state();
 
         Task::succeed(move || MyGame {
-            game_matrix: GameMatrix(raw_matrix),
+            game_matrix,
             sim_playing: false,
+            sim_speed: 1,
+            tick: 0,
         })
     }
 
     fn interact(&mut self, input: &mut Self::Input, _window: &mut Window) {
-       if input.keyboard().was_key_released(KeyCode::Space) {
+        // handle play/pause
+        if input.keyboard().was_key_released(KeyCode::Space) {
            self.sim_playing = !self.sim_playing;
-       }
+        }
+
+        // handle sim speed changes
+        let new_sim_speed = ((self.sim_speed as f32) + input.mouse().wheel_movement().vertical).round();
+
+        self.sim_speed = if new_sim_speed < 1.0 { 1u16 }
+            else if new_sim_speed > MyGame::TICKS_PER_SECOND as f32 { MyGame::TICKS_PER_SECOND }
+            else { new_sim_speed as u16 };
+
+        // randle restart
+        if input.keyboard().was_key_released(KeyCode::R) {
+            self.game_matrix = init_random_game_state();
+        }
     }
 
     fn update(&mut self, _window: &Window) {
 
         // Skip sim step if paused
-        if !self.sim_playing { return; }
+        if !self.sim_playing { self.tick = 0; return; }
+
+        // 
+        let ticks_between_updates = MyGame::TICKS_PER_SECOND.div_euclid(self.sim_speed);
+        if self.tick >= ticks_between_updates { self.tick = 0; }
+        else { self.tick = self.tick + 1; return; }
 
         // Simulation step
         let new_game_matrix: GameMatrix<100, 100> = GameMatrix::new();
@@ -117,14 +182,12 @@ impl Game for MyGame {
 
         // Draw your game here. Check out the `graphics` module!
 
-        let MyGame { sim_playing: _, game_matrix } = self;
+        let game_matrix = &self.game_matrix;
 
         // Calc cell size and offset
         let max_cell_height = frame.height() / (game_matrix.height() as f32);
         let max_cell_width = frame.width() / (game_matrix.width() as f32);
-        let cell_size =
-            if max_cell_width < max_cell_height { max_cell_width }
-            else { max_cell_height };
+        let cell_size = max_cell_height.min(max_cell_width);
 
         let left_offset = (frame.width() - (game_matrix.width() as f32 * cell_size)) / 2.0;
         let top_offset = (frame.height() - (game_matrix.height() as f32 * cell_size)) / 2.0;
@@ -133,7 +196,7 @@ impl Game for MyGame {
         let mut mesh = Mesh::new();
 
         for ((x, y), cell_is_alive) in game_matrix.iter_cells() {
-            let cell_shape  = Shape::Rectangle(Rectangle {
+            let cell_shape = Shape::Rectangle(Rectangle {
                 x: left_offset + (x as f32 * cell_size),
                 y: top_offset + (y as f32 * cell_size),
                 width: cell_size,
