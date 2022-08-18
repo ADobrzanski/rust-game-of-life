@@ -13,6 +13,18 @@ impl<const W: usize, const H: usize> GameMatrix<W, H> {
         H
     }
 
+    pub fn try_set_alive(&mut self, x: usize, y: usize, alive: bool) -> Result<(), String> {
+        if x >= self.width() || y >= self.height() {
+            let msg = format!("Setting alive cell (x{:}, y:{:}) outside matrix (w:{:} h:{:})", x, y, self.width(), self.height());
+            return Err(msg);
+        }
+
+        let GameMatrix(matrix) = self;
+        matrix[x][y] = alive;
+
+        Ok(())
+    }
+
     pub fn is_cell_alive(&self, x: usize, y: usize) -> bool {
         let GameMatrix(matrix) = self;
 

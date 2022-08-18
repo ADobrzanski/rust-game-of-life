@@ -1,4 +1,4 @@
-use coffee::graphics::{Color, Frame, Window, WindowSettings, Mesh, Shape, Rectangle};
+use coffee::graphics::{Color, Frame, Window, WindowSettings, Mesh, Shape, Point};
 use coffee::ui::{Align, Column, Element, Justify, Renderer, Text, UserInterface};
 use coffee::load::Task;
 use coffee::{Game, Result, Timer};
@@ -74,13 +74,32 @@ fn init_random_game_state() -> GameMatrix<100, 100> {
     GameMatrix(raw_matrix)
 }
 
-
 struct MyGame {
    // Your game state and assets go here...
     game_matrix: GameMatrix<100, 100>,
     sim_playing: bool,
     sim_speed: u16,
     tick: u16,
+    cursor: Option<Point>,
+    world_offset: Point,
+    cell_size: f32,
+}
+
+fn window_pos_to_point_xy(point: &Point, world_offset: &Point, cell_size: &f32) -> (usize, usize) {
+    let x = (point.coords.x - world_offset.x).div_euclid(*cell_size);
+    let y = (point.coords.y - world_offset.y).div_euclid(*cell_size);
+    (x as usize, y as usize)
+}
+
+fn make_cell_shape(point_xy: &(usize, usize), size: &f32, world_offset: &Point) -> crate::Shape {
+    let (x, y) = point_xy;
+    Shape::Circle {
+        radius: size / 2.2,
+        center: Point::new(
+            world_offset.x + (*x as f32 * size) + size / 2.2,
+            world_offset.y + (*y as f32 * size) + size / 2.2
+        ),
+    }
 }
 
 impl UserInterface for MyGame {
@@ -133,10 +152,21 @@ impl Game for MyGame {
             sim_playing: false,
             sim_speed: 1,
             tick: 0,
+            cursor: None,
+            cell_size: 10.0,
+            world_offset: Point::new(0.0, 0.0),
         })
     }
 
     fn interact(&mut self, input: &mut Self::Input, _window: &mut Window) {
+        // handle manual cell placement
+        if !self.sim_playing {
+            for click in input.mouse().button_clicks(coffee::input::mouse::Button::Left) {
+                let (x,y) = window_pos_to_point_xy(&click, &self.world_offset, &self.cell_size);
+                let _ = self.game_matrix.try_set_alive(x, y, !self.game_matrix.is_cell_alive(x, y));
+            }
+        }
+
         // handle play/pause
         if input.keyboard().was_key_released(KeyCode::Space) {
            self.sim_playing = !self.sim_playing;
@@ -149,10 +179,19 @@ impl Game for MyGame {
             else if new_sim_speed > MyGame::TICKS_PER_SECOND as f32 { MyGame::TICKS_PER_SECOND }
             else { new_sim_speed as u16 };
 
-        // randle restart
+        // handle restart
         if input.keyboard().was_key_released(KeyCode::R) {
             self.game_matrix = init_random_game_state();
         }
+
+        // handle cursor position
+        self.cursor = if input.mouse().is_cursor_within_window() {
+            Some(input.mouse().cursor_position())
+        } else {
+            None
+        }
+
+
     }
 
     fn update(&mut self, _window: &Window) {
@@ -177,11 +216,12 @@ impl Game for MyGame {
     }
 
     fn draw(&mut self, frame: &mut Frame, _timer: &Timer) {
+        // TODO - improve performance with partial draw
+        //
         // Clear the current frame
         frame.clear(Color::BLACK);
 
         // Draw your game here. Check out the `graphics` module!
-
         let game_matrix = &self.game_matrix;
 
         // Calc cell size and offset
@@ -191,23 +231,30 @@ impl Game for MyGame {
 
         let left_offset = (frame.width() - (game_matrix.width() as f32 * cell_size)) / 2.0;
         let top_offset = (frame.height() - (game_matrix.height() as f32 * cell_size)) / 2.0;
+        let world_offset = Point::new(left_offset, top_offset);
 
         // Prepare and draw mesh based on matrix, cell_size and offests
         let mut mesh = Mesh::new();
-
-        for ((x, y), cell_is_alive) in game_matrix.iter_cells() {
-            let cell_shape = Shape::Rectangle(Rectangle {
-                x: left_offset + (x as f32 * cell_size),
-                y: top_offset + (y as f32 * cell_size),
-                width: cell_size,
-                height: cell_size,
-            });
+        for (cell_xy, cell_is_alive) in game_matrix.iter_cells() {
+            let cell_shape = make_cell_shape(&cell_xy, &cell_size, &world_offset);
 
             if *cell_is_alive {
-                mesh.fill(cell_shape, Color::WHITE);
+                mesh.fill(cell_shape, Color::GREEN);
             }
         }
 
+        // draw cursor
+        if let Some(point) = self.cursor {
+            let (x, y) = window_pos_to_point_xy(&point, &world_offset, &cell_size);
+            let pointer_shape = make_cell_shape(&(x, y), &cell_size, &world_offset);
+            let pointer_color = if game_matrix.is_cell_alive(x, y) { Color::WHITE } else { Color::from_rgb(200, 200, 200) };
+            mesh.fill(pointer_shape, pointer_color);
+        }
+
         mesh.draw(&mut frame.as_target());
+
+        self.world_offset = world_offset;
+        self.cell_size = cell_size;
+        
     }
 }
